@@ -15,3 +15,9 @@
 1. 前往右侧的 **[发布]** 页面。
 2. 下载最新版本的 `Vision_Transform_Master_v1.0.zip`。
 3. 解压后，双击运行 `image_process_gui.exe` 即可。
+
+## 💡 致谢与参考 (Acknowledgments)
+
+本项目在开发过程中参考了以下优秀项目：
+
+* **(https://gitee.com/link?target=https%3A%2F%2Fgithub.com%2Fouyangyanhuo%2Fcam_distortion_correction)** - 参考了其去畸变算法的底层实现逻辑。
