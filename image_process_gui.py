@@ -561,11 +561,12 @@ class MappingTaskThread(QThread):
     finished_ok = pyqtSignal(str)    # 导出目录
     finished_err = pyqtSignal(str)   # 错误信息
 
-    def __init__(self, K, D, M, img_size, out_dir, export_format="python", parent=None):
+    def __init__(self, K, D, M, out_size, img_size, out_dir, export_format="python", parent=None):
         super().__init__(parent)
         self._K = K
         self._D = D
         self._M = M
+        self._out_size = out_size
         self._img_size = img_size
         self._out_dir = out_dir
         self._fmt = export_format   # "python" | "c"
@@ -574,7 +575,7 @@ class MappingTaskThread(QThread):
         try:
             self.progress.emit(10)
             map_h, map_w = compute_undist_inverse_map(
-                self._K, self._D, self._M, self._img_size
+                self._K, self._D, self._M, self._out_size, self._img_size
             )
             self.progress.emit(60)
             if self._fmt == "python":
@@ -825,6 +826,20 @@ class PerspectiveInterface(QFrame):
 
         K, D = self._get_KD()
         img_size = (self._original_img.shape[0], self._original_img.shape[1])
+        
+        # 获取目标输出尺寸
+        mw = self._main_window()
+        if mw is None:
+            QMessageBox.warning(self, "错误", "无法访问设置页面")
+            return
+        si = mw.settings_interface
+        try:
+            out_w = int(si.input_result_w.text())
+            out_h = int(si.input_result_h.text())
+        except ValueError:
+            QMessageBox.warning(self, "参数错误", "请在设置页面填入有效数字")
+            return
+        out_size = (out_w, out_h)
 
         self.progress_bar.setValue(0)
         self.progress_bar.setVisible(True)
@@ -833,7 +848,7 @@ class PerspectiveInterface(QFrame):
         self.status_label.setText(f"正在打表 [{fmt_label}] → {export_dir}")
 
         self._mapping_thread = MappingTaskThread(
-            K, D, self._perspective_M, img_size,
+            K, D, self._perspective_M, out_size, img_size,
             export_dir, export_format=fmt, parent=self
         )
         self._mapping_thread.progress.connect(self._on_mapping_progress)

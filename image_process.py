@@ -42,40 +42,46 @@ def compute_undist_inverse_map(
     camera_matrix: np.ndarray,
     dist_coeffs: np.ndarray,
     M: np.ndarray,
+    out_size: tuple,
     img_size: tuple,
 ) -> tuple:
-    """
-    计算去畸变 + 逆透视的组合映射表。
-    对原图每个像素 (H, W)，先查去畸变映射，再代入透视矩阵 M。
-    返回 (map_h, map_w)，形状均为 [H][W] 的二维数组。
-    """
+    """反向查表算法：从目标图像 (如 160x120) 反推回原始畸变图像的坐标"""
+    out_w, out_h = out_size
     h, w = img_size
 
-    # 生成像素网格 (W, H)，与 MATLAB 中 meshgrid 对应
-    ws, hs = np.meshgrid(np.arange(w, dtype=np.float64),
-                         np.arange(h, dtype=np.float64))
-    points = np.stack([ws.ravel(), hs.ravel()], axis=-1)  # shape: (H*W, 2)
-
-    # 使用 cv2.undistortPoints 计算去畸变后的归一化坐标，再投影回像素坐标
+    # 1. 获取优化后的相机内参
     new_matrix, _ = cv2.getOptimalNewCameraMatrix(
         camera_matrix, dist_coeffs, (w, h), 1, (w, h)
     )
-    undist_pts = cv2.undistortPoints(
-        points.reshape(-1, 1, 2), camera_matrix, dist_coeffs, P=new_matrix
-    )
-    undist_pts = undist_pts.reshape(-1, 2)  # (H*W, 2), 每行 (x, y)
 
-    undist_w = undist_pts[:, 0]  # 对应 MATLAB 的 UndistMapW
-    undist_h = undist_pts[:, 1]  # 对应 MATLAB 的 UndistMapH
+    # 2. 生成目标输出图的网格坐标 (u, v)
+    u, v = np.meshgrid(np.arange(out_w, dtype=np.float32),
+                       np.arange(out_h, dtype=np.float32))
+    bev_pts = np.stack([u.ravel(), v.ravel()], axis=-1)
 
-    # 将去畸变坐标代入透视矩阵 M（齐次变换）
-    # MapH_i = (M[1,0]*W + M[1,1]*H + M[1,2]) / (M[2,0]*W + M[2,1]*H + 1)
-    # MapW_i = (M[0,0]*W + M[0,1]*H + M[0,2]) / (M[2,0]*W + M[2,1]*H + 1)
-    denom = M[2, 0] * undist_w + M[2, 1] * undist_h + 1.0
-    map_h = (M[1, 0] * undist_w + M[1, 1] * undist_h + M[1, 2]) / denom
-    map_w = (M[0, 0] * undist_w + M[0, 1] * undist_h + M[0, 2]) / denom
+    # 3. 乘以 M 的逆矩阵，反推回“去畸变图像”上的坐标
+    M_inv = np.linalg.inv(M)
+    bev_pts_h = np.concatenate([bev_pts, np.ones((bev_pts.shape[0], 1))], axis=-1)
+    undist_pts_h = bev_pts_h @ M_inv.T
+    undist_pts = undist_pts_h[:, :2] / undist_pts_h[:, 2:]
 
-    return map_h.reshape(h, w), map_w.reshape(h, w)
+    # 4. 将去畸变像素坐标转为归一化相机坐标 (z=1 平面)
+    new_matrix_inv = np.linalg.inv(new_matrix)
+    undist_pts_h2 = np.concatenate([undist_pts, np.ones((undist_pts.shape[0], 1))], axis=-1)
+    norm_pts_h = undist_pts_h2 @ new_matrix_inv.T
+    norm_pts = norm_pts_h[:, :2] / norm_pts_h[:, 2:]
+
+    # 5. 利用 projectPoints，将归一化坐标重新“加上畸变”，投影回原始像素坐标
+    obj_pts = np.concatenate([norm_pts, np.ones((norm_pts.shape[0], 1))], axis=-1).astype(np.float32)
+    rvec = np.zeros((3, 1), dtype=np.float64)
+    tvec = np.zeros((3, 1), dtype=np.float64)
+    dist_pts, _ = cv2.projectPoints(obj_pts, rvec, tvec, camera_matrix, dist_coeffs)
+    dist_pts = dist_pts.reshape(-1, 2)
+
+    map_w = dist_pts[:, 0].reshape(out_h, out_w)
+    map_h = dist_pts[:, 1].reshape(out_h, out_w)
+
+    return map_h, map_w
 
 
 def export_table_python(
